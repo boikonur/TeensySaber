@@ -42,6 +42,7 @@
 
 // #define ENABLE_DEBUG
 
+
 //
 // OVERVIEW
 //
@@ -53,7 +54,7 @@
 // Once an event is registered, such as "on" or "clash", the
 // event is sent to all registered SaberBase classes.
 //
-// Generally speaking, thre are usually two registered SaberBase
+// Generally speaking, there are usually two registered SaberBase
 // classes listening for events. One for sound and one for 
 // the blade. Sound and blade effects are generally executed
 // separately by separate clases.
@@ -145,6 +146,7 @@
 #define DMAChannel stm32l4_dma_t
 #define DMAMEM
 #define NVIC_SET_PRIORITY(X,Y) NVIC_SetPriority((X), (IRQn_Type)(Y))
+
 #endif
 
 #include <SPI.h>
@@ -281,6 +283,8 @@ enum EVENT : uint32_t {
   EVENT_NONE = 0,
   EVENT_PRESSED,
   EVENT_RELEASED,
+  EVENT_HELD,
+  EVENT_HELD_LONG,
   EVENT_CLICK_SHORT,
   EVENT_CLICK_LONG,
   EVENT_DOUBLE_CLICK, // Note, will also generate a short click
@@ -300,15 +304,13 @@ uint32_t current_modifiers = BUTTON_NONE;
 
 SaberBase* saberbases = NULL;
 SaberBase::LockupType SaberBase::lockup_ = SaberBase::LOCKUP_NONE;
-size_t SaberBase::num_blasts_ = 0;
-struct SaberBase::Blast SaberBase::blasts_[3];
 bool SaberBase::on_ = false;
 uint32_t SaberBase::last_motion_request_ = 0;
 
 #include "common/box_filter.h"
 
 // Returns the decimals of a number, ie 12.2134 -> 0.2134
-float fract(float x) { return x - floor(x); }
+float fract(float x) { return x - floorf(x); }
 
 // clamp(x, a, b) makes sure that x is between a and b.
 float clamp(float x, float a, float b) {
@@ -317,7 +319,7 @@ float clamp(float x, float a, float b) {
   return x;
 }
 float Fmod(float a, float b) {
-  return a - floor(a / b) * b;
+  return a - floorf(a / b) * b;
 }
 
 int32_t clampi32(int32_t x, int32_t a, int32_t b) {
@@ -333,7 +335,9 @@ int16_t clamptoi16(int32_t x) {
 
 void EnableBooster();
 void EnableAmplifier();
+void MountSDCard();
 
+#include "common/lsfs.h"
 #ifdef ENABLE_AUDIO
 
 #include "sound/click_avoider_lin.h"
@@ -350,14 +354,15 @@ Beeper beeper;
 Talkie talkie;
 
 // LightSaberSynth saber_synth;
-
 #include "sound/buffered_audio_stream.h"
 
 #else  // ENABLE_AUDIO
 
+#include "common/sd_card.h"
 #define LOCK_SD(X) do { } while(0)
 
 #endif  // ENABLE_AUDIO
+
 
 class Effect;
 Effect* all_effects = NULL;
@@ -407,8 +412,6 @@ bool endswith(const char *postfix, const char* x) {
   }
   return true;
 }
-
-#include "common/lsfs.h"
 
 char current_directory[128];
 
@@ -533,13 +536,13 @@ class SmoothSwingConfigFile : public ConfigFile {
 public:
   void SetVariable(const char* variable, float v) override {
     CONFIG_VARIABLE(Version, 1);
-    CONFIG_VARIABLE(SwingSensitivity, 450.0);
-    CONFIG_VARIABLE(MaximumHumDucking, 75.0);
-    CONFIG_VARIABLE(SwingSharpness, 1.75);
-    CONFIG_VARIABLE(SwingStrengthThreshold, 20.0);
-    CONFIG_VARIABLE(Transition1Degrees, 45.0);
-    CONFIG_VARIABLE(Transition2Degrees, 160.0);
-    CONFIG_VARIABLE(MaxSwingVolume, 3.0);
+    CONFIG_VARIABLE(SwingSensitivity, 450.0f);
+    CONFIG_VARIABLE(MaximumHumDucking, 75.0f);
+    CONFIG_VARIABLE(SwingSharpness, 1.75f);
+    CONFIG_VARIABLE(SwingStrengthThreshold, 20.0f);
+    CONFIG_VARIABLE(Transition1Degrees, 45.0f);
+    CONFIG_VARIABLE(Transition2Degrees, 160.0f);
+    CONFIG_VARIABLE(MaxSwingVolume, 3.0f);
   };
 
   int  Version;
@@ -805,6 +808,7 @@ public:
       return;
     activated_ = millis();
     STDOUT.println("Ignition.");
+    MountSDCard();
     EnableAmplifier();
     SaberBase::TurnOn();
 
@@ -975,8 +979,8 @@ public:
     pinMode(bladeIdentifyPin, INPUT_PULLUP);
     delay(100);
     int blade_id = analogRead(bladeIdentifyPin);
-    float volts = blade_id * 3.3 / 1024.0;  // Volts at bladeIdentifyPin
-    float amps = (3.3 - volts) / 33000;     // Pull-up is 33k
+    float volts = blade_id * 3.3f / 1024.0f;  // Volts at bladeIdentifyPin
+    float amps = (3.3f - volts) / 33000;     // Pull-up is 33k
     float resistor = volts / amps;
     STDOUT.print("ID: ");
     STDOUT.print(blade_id);
@@ -995,7 +999,7 @@ public:
     size_t best_config = 0;
     float best_err = 1000000.0;
     for (size_t i = 0; i < sizeof(blades) / sizeof(blades)[0]; i++) {
-      float err = fabs(resistor - blades[i].ohm);
+      float err = fabsf(resistor - blades[i].ohm);
       if (err < best_err) {
         best_config = i;
         best_err = err;
@@ -1057,7 +1061,7 @@ public:
       STDOUT.print(", ");
       STDOUT.print(at_peak.z);
       STDOUT.print(" (");
-      STDOUT.print(sqrt(peak));
+      STDOUT.print(sqrtf(peak));
       STDOUT.println(")");
       peak = 0.0;
     }
@@ -1156,8 +1160,8 @@ public:
       STDOUT.println(gyro.z);
     }
     if (abs(gyro.x) > 200.0 &&
-        abs(gyro.x) > 3.0 * abs(gyro.y) &&
-        abs(gyro.x) > 3.0 * abs(gyro.z)) {
+        abs(gyro.x) > 3.0f * abs(gyro.y) &&
+        abs(gyro.x) > 3.0f * abs(gyro.z)) {
       DoGesture(gyro.x > 0 ? TWIST_LEFT : TWIST_RIGHT);
     } else {
       DoGesture(NO_STROKE);
@@ -1176,6 +1180,7 @@ protected:
       track_player_->Stop();
       track_player_.Free();
     } else {
+      MountSDCard();
       EnableAmplifier();
       track_player_ = GetFreeWavPlayer();
       if (track_player_) {
@@ -1243,6 +1248,8 @@ protected:
       case EVENT_SHAKE: STDOUT.print("Shake"); break;
       case EVENT_TWIST: STDOUT.print("Twist"); break;
       case EVENT_CLASH: STDOUT.print("Clash"); break;
+      case EVENT_HELD: STDOUT.print("Held"); break;
+      case EVENT_HELD_LONG: STDOUT.print("HeldLong"); break;
     }
   }
 
@@ -1327,7 +1334,7 @@ public:
 
       case EVENTID(BUTTON_AUX, EVENT_CLICK_SHORT, MODE_ON):
         // Avoid the base and the very tip.
-        SaberBase::addBlast((200 + random(700)) / 1000.0);
+	// TODO: Make blast only appear on one blade!
         SaberBase::DoBlast();
         break;
 
@@ -1422,7 +1429,7 @@ public:
     }
     if (!strcmp(cmd, "blast")) {
       // Avoid the base and the very tip.
-      SaberBase::addBlast((200 + random(700)) / 1000.0);
+      // TODO: Make blast only appear on one blade!
       SaberBase::DoBlast();
       return true;
     }
@@ -1462,6 +1469,7 @@ public:
         StartOrStopTrack();
         return true;
       }
+      MountSDCard();
       EnableAmplifier();
       RefPtr<BufferedWavPlayer> player = GetFreeWavPlayer();
       if (player) {
@@ -1482,6 +1490,7 @@ public:
         track_player_->Stop();
         track_player_.Free();
       }
+      MountSDCard();
       EnableAmplifier();
       track_player_ = GetFreeWavPlayer();
       if (track_player_) {
@@ -1685,7 +1694,7 @@ public:
   void Loop() override {
     STATE_MACHINE_BEGIN();
     SLEEP(2000);
-    if (fabs(saber.id() - 125812.5f) > 22687.0f) {
+    if (fabsf(saber.id() - 125812.5f) > 22687.0f) {
       STDOUT.println("ID IS WRONG!!!");
       beeper.Beep(0.5, 2000.0);
       SLEEP(1000);
@@ -1829,7 +1838,7 @@ public:
     STDOUT.println(" battery found.");
     EnableBooster();
     SLEEP(100);
-    if (fabs(saber.id() - 110000.0f) > 22687.0f) {
+    if (fabsf(saber.id() - 110000.0f) > 22687.0f) {
       STDOUT.println("ID IS WRONG (want 2.5 volts)!!!");
       beeper.Beep(0.5, 2000.0);
       SLEEP(1000);
@@ -2381,18 +2390,18 @@ class Commands : public CommandParser {
 #endif
 
       // TODO: list cpu usage for various objects.
-      double total_cycles =
-        (double)(audio_dma_interrupt_cycles +
+      float total_cycles =
+        (float)(audio_dma_interrupt_cycles +
                  wav_interrupt_cycles +
                  loop_cycles);
       STDOUT.print("Audio DMA: ");
-      STDOUT.print(audio_dma_interrupt_cycles * 100.0 / total_cycles);
+      STDOUT.print(audio_dma_interrupt_cycles * 100.0f / total_cycles);
       STDOUT.println("%");
       STDOUT.print("Wav reading: ");
-      STDOUT.print(wav_interrupt_cycles * 100.0 / total_cycles);
+      STDOUT.print(wav_interrupt_cycles * 100.0f / total_cycles);
       STDOUT.println("%");
       STDOUT.print("LOOP: ");
-      STDOUT.print(loop_cycles * 100.0 / total_cycles);
+      STDOUT.print(loop_cycles * 100.0f / total_cycles);
       STDOUT.println("%");
       STDOUT.print("Global loops / second: ");
       global_loop_counter.Print();
@@ -2787,6 +2796,7 @@ ACCEL_CLASS accelerometer;
 #endif   // ENABLE_MOTION
 
 #include "sound/amplifier.h"
+#include "common/sd_card.h"
 #include "common/booster.h"
 
 void setup() {
