@@ -1,6 +1,8 @@
 #ifndef STYLES_COLOR_CYCLE_H
 #define STYLES_COLOR_CYCLE_H
 
+#include <algorithm>
+
 // Usage: ColorCycle<COLOR, PERCENT, RPM>
 // or: ColorCycle<COLOR, PERCENT, RPM, ON_COLOR, ON_PERCENT, ON_RPM, FADE_TIME_MILLIS>
 // COLOR, ON_COLOR: COLOR
@@ -18,7 +20,8 @@ template<class COLOR, int percentage, int rpm,
          int fade_time_millis = 1>
 class ColorCycle {
 public:
-  void run(BladeBase* base) {
+  bool run(BladeBase* base) {
+    bool keep_running = true;
     c_.run(base);
     on_c_.run(base);
 
@@ -29,7 +32,7 @@ public:
 
     float fade_delta = delta / 1000.0 / fade_time_millis;
     if (!base->is_on()) fade_delta = - fade_delta;
-    fade_ = max(0.0, min(1.0, fade_ + fade_delta));
+    fade_ = std::max<float>(0.0, std::min(1.0, fade_ + fade_delta));
 
     float current_rpm = rpm * (1 - fade_) + on_rpm * fade_;
     float current_percentage =
@@ -44,10 +47,11 @@ public:
     } else if (current_percentage == 0.0) {
       start_ = 0;
       end_ = 0;
-      base->allow_disable();
+      keep_running = false;
     } else {
       end_ = fract(pos_ + current_percentage / 100.0) * num_leds_;
     }
+    return keep_running;
   }
   OverDriveColor getColor(int led) {
     Range led_range(led * 16384, led * 16384 + 16384);
