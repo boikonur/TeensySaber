@@ -451,7 +451,8 @@ EFFECT(blaster);
 EFFECT(lockup);
 EFFECT(poweronf);
 EFFECT(font);   // also polyphonic
-EFFECT(endlock); // Plecter endlock support
+EFFECT(bgnlock); // monophonic and polyphonic begin lock
+EFFECT(endlock); // Plecter endlock support, used for polyphonic name too
 
 // Polyphonic fonts
 EFFECT(blst);
@@ -630,6 +631,7 @@ struct is_same_type<T, T> { static const bool value = true; };
 #include "functions/scale.h"
 #include "functions/battery_level.h"
 #include "functions/trigger.h"
+#include "functions/bump.h"
 
 // This macro has a problem with commas, please don't use it.
 #define EASYBLADE(COLOR, CLASH_COLOR) \
@@ -800,8 +802,8 @@ public:
   void Off() {
     if (!SaberBase::IsOn()) return;
     if (SaberBase::Lockup()) {
-      SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
       SaberBase::DoEndLockup();
+      SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
     }
     SaberBase::TurnOff();
     if (unmute_on_deactivation_) {
@@ -1440,8 +1442,8 @@ public:
         case EVENTID(BUTTON_POWER, EVENT_RELEASED, MODE_ON):
         case EVENTID(BUTTON_AUX, EVENT_RELEASED, MODE_ON):
           if (SaberBase::Lockup()) {
-            SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
             SaberBase::DoEndLockup();
+            SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
           } else {
             handled = false;
           }
@@ -1495,8 +1497,8 @@ public:
         SaberBase::DoBeginLockup();
         STDOUT.println("ON");
       } else {
-        SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
         SaberBase::DoEndLockup();
+        SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
         STDOUT.println("OFF");
       }
       return true;
@@ -1508,8 +1510,8 @@ public:
         SaberBase::DoBeginLockup();
         STDOUT.println("ON");
       } else {
-        SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
         SaberBase::DoEndLockup();
+        SaberBase::SetLockup(SaberBase::LOCKUP_NONE);
         STDOUT.println("OFF");
       }
       return true;
